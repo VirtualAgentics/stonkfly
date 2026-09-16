@@ -56,8 +56,39 @@ def main():
         choices=["BTC-USDC", "ETH-USDC", "SOL-USDC"],
     )
     run.add_argument("--neural-ms", type=float, default=500)
+    run.add_argument(
+        "--replay",
+        type=Path,
+        help="Stored candles from `fetch`; chronological paper replay, implies --fast",
+    )
+    run.add_argument("--from", dest="replay_from", help="Window start, ISO with zone")
+    run.add_argument("--to", dest="replay_to", help="Window end (exclusive), ISO with zone")
+    run.add_argument(
+        "--brain",
+        type=Path,
+        help="Start a fresh run directory from an existing brain checkpoint",
+    )
+    run.add_argument(
+        "--reinforcement-file",
+        type=Path,
+        help="Control: take the stimulus sequence from another run's events.jsonl",
+    )
+    run.add_argument(
+        "--reinforcement-seed",
+        type=int,
+        help="Control: permute that stimulus sequence with this seed",
+    )
     status = sub.add_parser("status")
     status.add_argument("--out", type=Path, default=Path("runs/paper"))
+    fetch = sub.add_parser("fetch", help="Store public one-minute candles for replay")
+    fetch.add_argument(
+        "--product", default="BTC-USDC", choices=["BTC-USDC", "ETH-USDC", "SOL-USDC"]
+    )
+    fetch.add_argument("--days", type=float, default=7)
+    fetch.add_argument("--out", type=Path)
+    report = sub.add_parser("report", help="Summarize run directories side by side")
+    report.add_argument("runs", nargs="+", type=Path)
+    report.add_argument("--json", action="store_true")
     a = p.parse_args()
     from dotenv import load_dotenv
 
@@ -70,6 +101,17 @@ def main():
             prepare(a.reuse_doomfly)
         else:
             print(json.dumps(verify()))
+        return
+    if a.command == "fetch":
+        from .market import fetch_candles
+
+        print(json.dumps(fetch_candles(a.product, a.days, out=a.out)), flush=True)
+        return
+    if a.command == "report":
+        from .report import summarize, table
+
+        summaries = [summarize(d) for d in a.runs]
+        print(json.dumps(summaries, indent=2) if a.json else table(summaries))
         return
     if a.command == "status":
         import sqlite3
@@ -94,10 +136,18 @@ def main():
             )
         )
         return
-    if a.live and (a.fixture or a.fast):
-        p.error("Live mode forbids fixtures and fast replay")
+    if a.live and (a.fixture or a.fast or a.replay or a.brain or a.reinforcement_file):
+        p.error("Live mode forbids fixtures, fast replay, imported brains and controls")
+    if a.replay and a.fixture:
+        p.error("Choose either --replay or --fixture")
+    if a.replay and len(a.products) != 1:
+        p.error("Replay supports exactly one product")
+    if a.reinforcement_seed is not None and not a.reinforcement_file:
+        p.error("--reinforcement-seed needs --reinforcement-file")
     if a.steps < 0:
         p.error("steps cannot be negative")
+    if a.replay:
+        a.fast = True
     settings = Settings(
         products=tuple(a.products),
         learning=not a.frozen,
@@ -141,35 +191,79 @@ def main():
 
         from .actions import StonkflyActions
         from .display import market_frame
-        from .market import CoinbaseMarket, FixtureMarket
+        from .market import CoinbaseMarket, FixtureMarket, ReplayMarket
         from .neural.controller import FlyController
         from .reinforcement import reinforcement
         from .risk import Guard, Veto
 
-        market = (
-            FixtureMarket(settings.products)
-            if a.fixture
-            else CoinbaseMarket(settings.products)
-        )
+        if a.replay:
+            market = ReplayMarket(
+                settings.products, a.replay, a.replay_from, a.replay_to
+            )
+            feed = {
+                "replay": str(a.replay),
+                "sha256": hashlib.sha256(a.replay.read_bytes()).hexdigest(),
+                "window": list(market.window),
+                "fills": "next candle close +/- half spread",
+            }
+        elif a.fixture:
+            market = FixtureMarket(settings.products)
+            feed = "fixture"
+        else:
+            market = CoinbaseMarket(settings.products)
+            feed = "coinbase-public"
+        # Wall time, except a replay supplies candle time to every check.
+        clock = getattr(market, "clock", time.time)
         previous = ledger.get("observation")
         if previous:
             market.history = previous["market_history"]
             if a.fixture:
                 market.tick = previous["fixture_tick"]
+            if a.replay:
+                market.cursor = previous["replay_cursor"]
         controller = FlyController(settings)
         cp = ledger.get("checkpoint")
+        initial_brain = None
         if cp:
             path = out / cp["file"]
             if hashlib.sha256(path.read_bytes()).hexdigest() != cp["sha256"]:
                 raise RuntimeError("Checkpoint integrity mismatch")
             controller.restore(path)
+        elif a.brain:
+            controller.restore(a.brain)
+            initial_brain = {
+                "file": str(a.brain),
+                "sha256": hashlib.sha256(a.brain.read_bytes()).hexdigest(),
+            }
+        schedule = None
+        if a.reinforcement_file:
+            schedule = [
+                json.loads(line)["neural"]["stimulus"]
+                for line in a.reinforcement_file.read_text().splitlines()
+                if line.strip()
+            ]
+            if a.reinforcement_seed is not None:
+                import numpy as np
+
+                order = np.random.RandomState(a.reinforcement_seed).permutation(
+                    len(schedule)
+                )
+                schedule = [schedule[i] for i in order]
         provenance = {
             "settings": dataclasses.asdict(settings),
             "dataset": verified,
             "circuit": controller.brain.circuit["report"],
             "vision": controller.brain.visual_report,
             "mode": broker.mode,
-            "feed": "fixture" if a.fixture else "coinbase-public",
+            "feed": feed,
+            "initial_brain": initial_brain,
+            "reinforcement_control": {
+                "file": str(a.reinforcement_file),
+                "seed": a.reinforcement_seed,
+                "length": len(schedule),
+            }
+            if schedule is not None
+            else None,
             "decoder": "DNp20 mean R-L: buy/sell; DNpe017 spike gate; otherwise hold. Engineered fixed mapping.",
             "learning_validated": False,
             "pain_receptors_modeled": False,
@@ -191,24 +285,32 @@ def main():
             )
         ledger.put("provenance_sha256", signature)
         (out / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
-        guard = Guard(settings, ledger, out / "STOP")
+        guard = Guard(settings, ledger, out / "STOP", clock)
         action = StonkflyActions(guard, broker)
         count = 0
         while not a.steps or count < a.steps:
             started = time.monotonic()
             if (out / "STOP").exists() or ledger.get("halted"):
                 break
+            if getattr(market, "exhausted", False):
+                print("Replay window complete.", flush=True)
+                break
             broker.reconcile()
             broker.verify_balances()
             quotes = market.snapshot()
-            guard.check(quotes, time.time())
+            now = clock()
+            guard.check(quotes, now)
             market.record(quotes)
-            product = settings.products[ledger.get("tick") % len(settings.products)]
+            tick = ledger.get("tick")
+            product = settings.products[tick % len(settings.products)]
             q = quotes[product]
             equity = ledger.equity(quotes)
-            kind, delta = reinforcement(
+            natural, delta = reinforcement(
                 equity, ledger.get("anchor"), settings.reward_deadband
             )
+            kind = natural
+            if schedule is not None:
+                kind = schedule[tick] if tick < len(schedule) else "none"
             frame = market_frame(product, market.history[product], q.bid, q.ask)
             neural = controller.observe(frame, kind)
             # Checkpoint + accounting anchor are committed before any trade.
@@ -227,6 +329,7 @@ def main():
                 "pnl_delta_usdc": str(delta),
                 "market_history": market.history,
                 "fixture_tick": getattr(market, "tick", None),
+                "replay_cursor": getattr(market, "cursor", None),
             }
             ledger.commit_tick(equity, checkpoint_info, observation)
             order = {"status": "HOLD"}
@@ -244,6 +347,8 @@ def main():
             row = {
                 "tick": ledger.get("tick"),
                 "wall_time": time.time(),
+                "market_time": now,
+                "natural_stimulus": natural,
                 "product": product,
                 "mode": broker.mode,
                 "quote": q.json(),

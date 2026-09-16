@@ -5,8 +5,10 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 
-from .config import D
+from .config import D, down, up
+from .neural.common import DATA
 
 
 @dataclass(frozen=True)
@@ -168,3 +170,141 @@ class FixtureMarket:
         return quotes
 
     record = CoinbaseMarket.record
+
+
+CANDLE_PAGE = 350  # Coinbase public candles maximum per request
+
+
+def fetch_candles(product, days, client=None, out=None, now=None):
+    """Store completed public one-minute candles as a chronological parquet file.
+
+    Public endpoint, no key. Pages are merged and de-duplicated; values stay
+    exchange strings. The current, incomplete minute is never included.
+
+    The endpoint returns candles with start in (start, end], at most 350. Do
+    not pass `limit`: with it, the exchange ignores the requested range and
+    returns the newest candles instead.
+    """
+    if client is None:
+        from coinbase.rest import RESTClient
+
+        client = RESTClient(api_key=None, api_secret=None, timeout=10)
+    if not math.isfinite(days) or days <= 0:
+        raise ValueError("Positive number of days required")
+    now = time.time() if now is None else now
+    end = int(now // 60) * 60
+    start = end - int(days * 86400)
+    rows = {}
+    cursor = end
+    while cursor > start:
+        chunk = max(start, cursor - CANDLE_PAGE * 60)
+        r = unwrap(
+            client.get_public_candles(product, str(chunk), str(cursor), "ONE_MINUTE")
+        )
+        for c in r.get("candles", []):
+            t = int(c["start"])
+            if chunk < t <= cursor and t < end:
+                rows[t] = c
+        cursor = chunk
+    if not rows:
+        raise RuntimeError("No candles returned")
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    keys = sorted(rows)
+    table = pa.table(
+        {
+            "start": pa.array(keys, pa.int64()),
+            **{
+                k: pa.array([str(D(rows[t][k])) for t in keys], pa.string())
+                for k in ["open", "high", "low", "close", "volume"]
+            },
+        }
+    )
+    out = Path(out) if out else DATA / "candles" / f"{product}.parquet"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".partial")
+    pq.write_table(table, tmp)
+    tmp.replace(out)
+    return {
+        "product": product,
+        "candles": len(keys),
+        "first": keys[0],
+        "last": keys[-1],
+        "path": str(out),
+    }
+
+
+class ReplayMarket:
+    """Chronological replay of stored public candles. Paper only.
+
+    Observation t sees candle t's close as the midpoint. The execution
+    snapshot taken after an observation is served from candle t+1, so a paper
+    fill happens at the next candle, never at the price that produced the
+    decision. History is seeded only from candles before the window.
+    """
+
+    HALF_SPREAD = D(".0005")
+
+    def __init__(self, products, path, start=None, end=None, seed_history=120):
+        if len(products) != 1:
+            raise ValueError("Replay supports exactly one product")
+        import pyarrow.parquet as pq
+
+        self.products = tuple(products)
+        self.product = products[0]
+        self.path = Path(path)
+        t = pq.read_table(self.path).to_pydict()
+        ts, closes = t["start"], t["close"]
+        if not ts or any(b <= a for a, b in zip(ts, ts[1:])):
+            raise ValueError("Candles must be nonempty and strictly chronological")
+        lo = utc_timestamp(start) if start else ts[0]
+        hi = utc_timestamp(end) if end else ts[-1] + 1
+        if not lo < hi:
+            raise ValueError("Empty replay window")
+        first = next((i for i, x in enumerate(ts) if x >= lo), len(ts))
+        last = next((i for i, x in enumerate(ts) if x >= hi), len(ts))
+        # Keep one candle past the window for the final execution snapshot.
+        self.candles = [
+            (int(ts[i]), D(closes[i])) for i in range(first, min(last + 1, len(ts)))
+        ]
+        if len(self.candles) < 2:
+            raise ValueError("Replay window needs at least two candles")
+        if any(c <= 0 for _, c in self.candles):
+            raise ValueError("Invalid replay price")
+        self.window = (self.candles[0][0], self.candles[-2][0])
+        seed = [float(D(closes[i])) for i in range(max(0, first - seed_history), first)]
+        if not seed:
+            raise ValueError("No history before the replay window")
+        self.history = {self.product: seed}
+        self.cursor = 0
+
+    @property
+    def exhausted(self):
+        return self.cursor >= len(self.candles) - 1
+
+    def clock(self):
+        return float(self.candles[min(self.cursor, len(self.candles) - 1)][0])
+
+    def snapshot(self):
+        if self.cursor >= len(self.candles):
+            raise RuntimeError("Replay exhausted")
+        t, close = self.candles[self.cursor]
+        inc = D(".01")
+        return {
+            self.product: Quote(
+                self.product,
+                down(close * (1 - self.HALF_SPREAD), inc),
+                up(close * (1 + self.HALF_SPREAD), inc),
+                float(t),
+                D(".00000001"),
+                inc,
+                inc,
+                D("1"),
+                D(".00000001"),
+            )
+        }
+
+    def record(self, quotes):
+        CoinbaseMarket.record(self, quotes)
+        self.cursor += 1

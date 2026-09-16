@@ -36,4 +36,6 @@ python -m stonkfly status
 python -m pytest -q
 ```
 
+To test the memory rule against controls without waiting for the market, replay stored public candles at candle time: `python -m stonkfly fetch`, then `run --replay` with `--frozen`, `--reinforcement-file` and `--brain` variants, and `report` to compare them. [Offline replay](docs/operations.md#offline-replay-and-controls).
+
 The repo does not come funded or connected to anyone’s account. Live execution needs your local credentials and explicit opt-in.

@@ -21,6 +21,42 @@ python -m stonkfly run --fixture --fast --steps 10 --out runs/fixture
 python -m stonkfly run --fixture --fast --frozen --steps 10 --out runs/frozen
 ```
 
+## Offline replay and controls
+
+Replay runs the same loop over stored public candles at candle time, so the
+quote-age, cooldown and daily-limit checks behave as they would live. It is
+paper only and never contacts the exchange.
+
+```sh
+# Store completed one-minute candles (public endpoint, no key).
+python -m stonkfly fetch --product BTC-USDC --days 7
+
+# Chronological window; observation t sees candle t, a fill happens at candle t+1.
+python -m stonkfly run --replay data/candles/BTC-USDC.parquet \
+  --from 2026-09-14T00:00:00Z --to 2026-09-15T00:00:00Z --out runs/learning
+
+# Controls on the same window.
+python -m stonkfly run --replay ... --from ... --to ... --frozen --out runs/frozen
+python -m stonkfly run --replay ... --from ... --to ... \
+  --reinforcement-file runs/learning/events.jsonl --reinforcement-seed 1 --out runs/shuffled
+
+# Held-out window, starting from the learned brain with fresh cash.
+python -m stonkfly run --replay ... --from 2026-09-15T00:00:00Z --to 2026-09-16T00:00:00Z \
+  --brain runs/learning/brain-0.npz --out runs/heldout
+
+python -m stonkfly report runs/learning runs/frozen runs/shuffled runs/heldout
+```
+
+Timestamps need an explicit zone. History before the window seeds the
+chart; nothing after the current candle is visible. Paper fills use the next
+candle's close with a 0.05% half spread plus the configured fee; there is no
+depth or impact model. `--reinforcement-file` replays another run's stimulus
+sequence tick by tick (a yoked control); with `--reinforcement-seed` the
+sequence is permuted (a shuffled control). The natural stimulus is still
+logged as `natural_stimulus`. `report` reads only local run directories and
+compares each run with cash and a single buy-and-hold order on its own
+window. Interrupting a replay and rerunning the same command resumes it.
+
 `--fast` skips wall waits only in paper mode. It preserves the 0.1 ms neural timestep and the real 60-second execution cooldown, so an accelerated probe can have many rejected trades. This is a plumbing/neural test, not a backtest of achievable market returns. Paper fills use observed bid/ask plus the configured fee; they do not simulate depth, queue position or all market impact. `--fixture` never claims real market data.
 
 ## Coinbase setup, performed by you

@@ -10,10 +10,12 @@ class Veto(Exception):
 
 
 class Guard:
-    def __init__(self, settings, ledger, stop_file):
+    def __init__(self, settings, ledger, stop_file, clock=None):
         self.s = settings
         self.l = ledger
         self.stop_file = stop_file
+        # Wall time by default; a replay market supplies candle time instead.
+        self.clock = time.time if clock is None else clock
 
     def check(self, quotes, now):
         if self.stop_file.exists():
@@ -36,7 +38,7 @@ class Guard:
             raise Veto("Loss stop reached")
 
     def plan(self, product, side, quotes, now=None):
-        now = time.time() if now is None else now
+        now = self.clock() if now is None else now
         self.check(quotes, now)
         if product not in self.s.products or side not in ("BUY", "SELL"):
             raise Veto("Invalid neural proposal")
@@ -75,7 +77,7 @@ class Guard:
         # Called after exchange preview and balance checks, at the final send boundary.
         if self.stop_file.exists() or self.l.get("halted"):
             raise Veto("Execution stopped")
-        if not -0.5 <= time.time() - plan["quote_timestamp"] <= self.s.max_quote_age:
+        if not -0.5 <= self.clock() - plan["quote_timestamp"] <= self.s.max_quote_age:
             raise Veto("Quote expired before submission")
         pending = self.l.pending()
         if (

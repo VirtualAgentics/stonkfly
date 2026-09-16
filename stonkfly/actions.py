@@ -4,7 +4,6 @@ The action is invoked directly by the fixed neural decoder. No LLM, general
 wallet tools, transfers, or agent framework sit between the proposal and the guard.
 """
 
-import time
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -30,5 +29,5 @@ class StonkflyActions:
         plan = self.guard.plan(p.product, p.side, self.quotes)
         plan["neural_observation"] = self.guard.l.get("observation")
         plan["checkpoint"] = self.guard.l.get("checkpoint")
-        plan = self.guard.l.reserve(plan, time.time())
+        plan = self.guard.l.reserve(plan, self.guard.clock())
         return self.broker.execute(plan, self.guard.before_submit)
