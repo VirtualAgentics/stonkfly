@@ -2,7 +2,7 @@
 
 Recorded during implementation on 2026-09-09. All exchange-order tests use an in-memory SDK double; **no real orders or funded-account checks were performed**.
 
-Final local result: **42 tests passed**, including the opt-in full-connectome test. An offline fixture run also resumed from its saved ledger/checkpoint with balances and neural time preserved. Four upstream AgentKit/Pydantic deprecation warnings remain; they did not fail the tests.
+Final local result: **42 tests passed**, including the opt-in full-connectome test. An offline fixture run also resumed from its saved ledger/checkpoint with balances and neural time preserved. An earlier AgentKit dependency, since removed, produced four Pydantic deprecation warnings; they did not fail the tests.
 
 | Check | Observed result | What it does not establish |
 | --- | --- | --- |

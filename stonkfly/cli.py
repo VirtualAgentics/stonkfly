@@ -192,8 +192,7 @@ def main():
         ledger.put("provenance_sha256", signature)
         (out / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
         guard = Guard(settings, ledger, out / "STOP")
-        provider = StonkflyActions(guard, broker)
-        action = provider.get_actions()[0]
+        action = StonkflyActions(guard, broker)
         count = 0
         while not a.steps or count < a.steps:
             started = time.monotonic()
@@ -238,7 +237,7 @@ def main():
                     latest = fresh[product]
                     if abs(latest.bid - q.bid) / q.bid > D(settings.slippage):
                         raise Veto("Price moved beyond neural observation tolerance")
-                    provider.quotes = fresh
+                    action.quotes = fresh
                     order = action.invoke({"product": product, "side": neural["side"]})
                 except Veto as e:
                     order = {"status": "VETO", "reason": str(e)}

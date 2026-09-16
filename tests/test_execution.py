@@ -100,16 +100,15 @@ def test_stop_loss_and_external_stop(env):
     assert "Loss stop" in l.get("halted")
 
 
-def test_agentkit_paper_accounting_and_cooldown(env):
+def test_action_paper_accounting_and_cooldown(env):
     s, l, g = env
-    provider = StonkflyActions(g, PaperBroker(s, l))
-    provider.quotes = {"BTC-USDC": quote()}
-    a = provider.get_actions()[0]
+    a = StonkflyActions(g, PaperBroker(s, l))
+    a.quotes = {"BTC-USDC": quote()}
     r = a.invoke({"product": "BTC-USDC", "side": "BUY"})
     assert r["status"] == "FILLED"
     assert l.cash == D("100") - D(r["quote"]) - D(r["fee"])
     assert l.positions["BTC-USDC"] == D(r["base"])
-    assert reinforcement(l.equity(provider.quotes), "100", ".01")[0] == "aversive"
+    assert reinforcement(l.equity(a.quotes), "100", ".01")[0] == "aversive"
     with pytest.raises(Veto):
         a.invoke({"product": "BTC-USDC", "side": "BUY"})
     with pytest.raises(ValidationError):
@@ -238,7 +237,7 @@ def live_double(env):
 def test_advanced_fok_and_reconciled_balances(env):
     sdk, broker, p = live_double(env)
     assert (
-        p.get_actions()[0].invoke({"product": "BTC-USDC", "side": "BUY"})["status"]
+        p.invoke({"product": "BTC-USDC", "side": "BUY"})["status"]
         == "SETTLED"
     )
     assert sdk.submissions == 1

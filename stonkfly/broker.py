@@ -1,4 +1,4 @@
-"""Official Coinbase Advanced SDK execution, wrapped by an AgentKit provider.
+"""Official Coinbase Advanced SDK execution, invoked by the guarded action.
 
 Live execution uses price-bounded fill-or-kill spot orders. Intent is persisted
 before the request. An ambiguous result is never retried as a new order.
