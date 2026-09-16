@@ -64,6 +64,12 @@ def main():
     )
     run.add_argument("--decoder-window", type=int, default=50)
     run.add_argument(
+        "--daily-orders",
+        type=int,
+        default=24,
+        help="Order attempts per UTC day (1..100); the 60 s cooldown still applies",
+    )
+    run.add_argument(
         "--reward-mode",
         choices=["equity", "fill"],
         default="equity",
@@ -169,6 +175,7 @@ def main():
         decoder_center=a.decoder_center,
         decoder_window=a.decoder_window,
         reward_mode=a.reward_mode,
+        daily_orders=a.daily_orders,
     )
     out = a.out or Path("runs/live" if a.live else "runs/paper")
     out.mkdir(parents=True, exist_ok=True)
