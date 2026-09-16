@@ -9,7 +9,7 @@ from .visual import VisualMemoryBrain
 
 
 class Decoder:
-    def __init__(self, ids, annotation, threshold):
+    def __init__(self, ids, annotation, threshold, center="none", window=50):
         types = annotation.type.fillna("")
         sides = annotation.somaSide.fillna("")
         self.left = np.flatnonzero(types.eq("DNp20") & sides.eq("L"))
@@ -17,7 +17,14 @@ class Decoder:
         self.gate = np.flatnonzero(types.eq("DNpe017"))
         if not len(self.left) or not len(self.right) or not len(self.gate):
             raise RuntimeError("Missing annotated BCI outputs")
+        if center not in ("none", "ema") or window < 2:
+            raise ValueError("Unsupported decoder centering")
         self.threshold = threshold
+        self.center = center
+        self.alpha = 2 / (window + 1)
+        # Running mean of past raw differences; updated only after a decision,
+        # so the current observation never sees its own value.
+        self.baseline = 0.0
         self.identities = {
             k: [str(ids[i]) for i in getattr(self, k)]
             for k in ["left", "right", "gate"]
@@ -27,7 +34,9 @@ class Decoder:
         # Mean rates prevent side population size from creating a built-in bias.
         left = float(np.mean(counts[self.left]) / seconds)
         right = float(np.mean(counts[self.right]) / seconds)
-        difference = right - left
+        raw = right - left
+        baseline = self.baseline if self.center == "ema" else 0.0
+        difference = raw - baseline
         gate = int(counts[self.gate].sum())
         side = (
             "HOLD"
@@ -36,11 +45,15 @@ class Decoder:
             if difference > 0
             else "SELL"
         )
+        if self.center == "ema":
+            self.baseline += self.alpha * (raw - self.baseline)
         return {
             "side": side,
             "left_hz": left,
             "right_hz": right,
+            "raw_difference_hz": raw,
             "difference_hz": difference,
+            "decoder_baseline_hz": baseline,
             "gate_spikes": gate,
             "cell_ids": self.identities,
         }
@@ -52,7 +65,11 @@ class FlyController:
         self.brain = VisualMemoryBrain()
         self.brain.weights_frozen = not settings.learning
         self.decoder = Decoder(
-            self.brain.ids, annotations(self.brain.ids), settings.decoder_threshold_hz
+            self.brain.ids,
+            annotations(self.brain.ids),
+            settings.decoder_threshold_hz,
+            settings.decoder_center,
+            settings.decoder_window,
         )
 
     def observe(self, rgb, reinforcement):

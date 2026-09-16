@@ -57,6 +57,13 @@ def main():
     )
     run.add_argument("--neural-ms", type=float, default=500)
     run.add_argument(
+        "--decoder-center",
+        choices=["none", "ema"],
+        default="none",
+        help="Subtract a running mean of the DNp20 difference before thresholding",
+    )
+    run.add_argument("--decoder-window", type=int, default=50)
+    run.add_argument(
         "--replay",
         type=Path,
         help="Stored candles from `fetch`; chronological paper replay, implies --fast",
@@ -153,6 +160,8 @@ def main():
         learning=not a.frozen,
         neural_ms=a.neural_ms,
         pulse_ms=min(200, a.neural_ms),
+        decoder_center=a.decoder_center,
+        decoder_window=a.decoder_window,
     )
     out = a.out or Path("runs/live" if a.live else "runs/paper")
     out.mkdir(parents=True, exist_ok=True)
@@ -222,6 +231,8 @@ def main():
             if a.replay:
                 market.cursor = previous["replay_cursor"]
         controller = FlyController(settings)
+        if previous and "decoder_baseline" in previous:
+            controller.decoder.baseline = previous["decoder_baseline"]
         cp = ledger.get("checkpoint")
         initial_brain = None
         if cp:
@@ -264,7 +275,12 @@ def main():
             }
             if schedule is not None
             else None,
-            "decoder": "DNp20 mean R-L: buy/sell; DNpe017 spike gate; otherwise hold. Engineered fixed mapping.",
+            "decoder": "DNp20 mean R-L: buy/sell; DNpe017 spike gate; otherwise hold. Engineered fixed mapping."
+            + (
+                f" Centered by an EMA of past differences (window {settings.decoder_window})."
+                if settings.decoder_center == "ema"
+                else ""
+            ),
             "learning_validated": False,
             "pain_receptors_modeled": False,
             "timing": "Each observation advances configured neural_ms regardless of wall-market time; no claim of real-time fly physiology.",
@@ -330,6 +346,7 @@ def main():
                 "market_history": market.history,
                 "fixture_tick": getattr(market, "tick", None),
                 "replay_cursor": getattr(market, "cursor", None),
+                "decoder_baseline": controller.decoder.baseline,
             }
             ledger.commit_tick(equity, checkpoint_info, observation)
             order = {"status": "HOLD"}

@@ -40,6 +40,8 @@ class Settings:
     pulse_current: float = 20
     reward_deadband: str = "0.01"
     decoder_threshold_hz: float = 2
+    decoder_center: str = "none"  # "none": fixed upstream decoder; "ema": subtract running mean
+    decoder_window: int = 50  # observations in the running mean
     paper_fee: str = "0.006"
     learning: bool = True
 
@@ -73,6 +75,10 @@ class Settings:
             raise ValueError("Rate limit: >=60 s between orders, <=100 orders/day")
         if D(self.reward_deadband) <= 0:
             raise ValueError("Positive reinforcement deadband required")
+        if self.decoder_center not in ("none", "ema") or (
+            type(self.decoder_window) is not int or not 2 <= self.decoder_window <= 10000
+        ):
+            raise ValueError("decoder_center must be none|ema with a 2..10000 window")
         for x in [
             self.max_quote_age,
             self.neural_ms,

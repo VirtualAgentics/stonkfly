@@ -13,6 +13,17 @@ from pathlib import Path
 from .config import D
 
 
+def histogram(values, edges=(-10, -6, -2, 2, 6, 10)):
+    """Counts per bin of the decoded difference; the middle bin is the hold band."""
+    labels = [f"<{edges[0]}"] + [f"{a}..{b}" for a, b in zip(edges, edges[1:])]
+    labels.append(f">={edges[-1]}")
+    counts = Counter()
+    for v in values:
+        i = sum(1 for e in edges if v >= e)
+        counts[labels[i]] += 1
+    return {k: counts.get(k, 0) for k in labels}
+
+
 def summarize(run_dir):
     run_dir = Path(run_dir)
     rows = [
@@ -60,6 +71,15 @@ def summarize(run_dir):
         "stimuli": {k: stimuli.get(k, 0) for k in ["reward", "aversive", "none"]},
         "mean_difference_hz": sum(r["neural"]["difference_hz"] for r in rows)
         / len(rows),
+        "mean_raw_difference_hz": sum(
+            r["neural"].get("raw_difference_hz", r["neural"]["difference_hz"])
+            for r in rows
+        )
+        / len(rows),
+        "gate_fraction": sum(1 for r in rows if r["neural"]["gate_spikes"]) / len(rows),
+        "difference_hz_histogram": histogram(
+            [r["neural"]["difference_hz"] for r in rows]
+        ),
         "changed_edges": rows[-1]["neural"]["memory"]["changed_edges"],
         "halted": meta.get("halted"),
         "unmarked_positions": unmarked,
@@ -83,6 +103,7 @@ def table(summaries):
         "R/A/N",
         "edges",
         "diffHz",
+        "gate%",
         "buy&hold",
         "mkt%",
     ]
@@ -104,6 +125,7 @@ def table(summaries):
                     f"{t['reward']}/{t['aversive']}/{t['none']}",
                     str(s["changed_edges"]),
                     f"{s['mean_difference_hz']:+.2f}",
+                    f"{100 * s['gate_fraction']:.0f}",
                     f"{D(s['baseline_buy_and_hold']):.4f}",
                     f"{s['market_change_pct']:+.2f}",
                 ]

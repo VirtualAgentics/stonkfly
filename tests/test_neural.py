@@ -21,6 +21,27 @@ def test_fixed_neuron_decoder():
     assert d.decode(np.array([4, 4, 1]), 0.5)["side"] == "HOLD"
 
 
+def test_centered_decoder_removes_persistent_bias_without_lookahead():
+    a = pd.DataFrame(
+        {"type": ["DNp20", "DNp20", "DNpe017"], "somaSide": ["L", "R", "L"]}
+    )
+    fixed = Decoder(np.array([1, 2, 3]), a, 2)
+    centered = Decoder(np.array([1, 2, 3]), a, 2, center="ema", window=5)
+    biased = np.array([0, 10, 1])  # Persistent +20 Hz right bias with the gate open.
+    first = centered.decode(biased, 0.5)
+    assert first["side"] == "BUY" and first["decoder_baseline_hz"] == 0.0
+    assert first["difference_hz"] == first["raw_difference_hz"] == 20.0
+    sides = [centered.decode(biased, 0.5)["side"] for _ in range(20)]
+    assert sides[-1] == "HOLD" and all(
+        fixed.decode(biased, 0.5)["side"] == "BUY" for _ in range(3)
+    )
+    # A genuine deviation from the learned baseline still decodes.
+    assert centered.decode(np.array([0, 20, 1]), 0.5)["side"] == "BUY"
+    assert centered.decode(np.array([10, 0, 1]), 0.5)["side"] == "SELL"
+    with pytest.raises(ValueError):
+        Decoder(np.array([1, 2, 3]), a, 2, center="median")
+
+
 @pytest.mark.parametrize(
     "equity,expected",
     [("100.03", "reward"), ("99.97", "aversive"), ("100.001", "none"), ("100", "none")],

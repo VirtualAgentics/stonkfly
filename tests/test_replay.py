@@ -155,13 +155,13 @@ def test_report_summarizes_events_and_baselines(tmp_path):
         {
             "quote": quote("100", "100.1", 1),
             "equity_usdc": "100",
-            "neural": {"side": "BUY", "stimulus": "none", "difference_hz": 4.0, "memory": {"changed_edges": 1}},
+            "neural": {"side": "BUY", "stimulus": "none", "difference_hz": 4.0, "gate_spikes": 1, "memory": {"changed_edges": 1}},
             "execution": {"status": "FILLED"},
         },
         {
             "quote": quote("110", "110.1", 61),
             "equity_usdc": "101",
-            "neural": {"side": "HOLD", "stimulus": "reward", "difference_hz": -2.0, "memory": {"changed_edges": 5}},
+            "neural": {"side": "HOLD", "stimulus": "reward", "difference_hz": -2.0, "gate_spikes": 0, "memory": {"changed_edges": 5}},
             "execution": {"status": "HOLD"},
         },
     ]
@@ -172,4 +172,5 @@ def test_report_summarizes_events_and_baselines(tmp_path):
     assert r["stimuli"] == {"reward": 1, "aversive": 0, "none": 1}
     assert D(r["baseline_buy_and_hold"]) == D(100) - D("10.06") + D(10) / D("100.1") * D(110)
     assert round(r["market_change_pct"], 3) == round((110 / 100.1 - 1) * 100, 3)
+    assert r["gate_fraction"] == 0.5 and r["difference_hz_histogram"]["2..6"] == 1
     assert "| run |" in table([r]) and "1/0/1" in table([r])

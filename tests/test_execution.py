@@ -54,6 +54,8 @@ def test_nonfinite_money(value):
         dict(reward_deadband="0"),
         dict(interval_seconds=float("nan")),
         dict(daily_orders=1.5),
+        dict(decoder_center="median"),
+        dict(decoder_window=1),
     ],
 )
 def test_configuration_bounds(changes):
