@@ -69,6 +69,15 @@ def test_stimulus_modes(mode, equity, anchor, fill_anchor, expected):
     assert (kind, delta) == (expected[0], D(expected[1]))
 
 
+def test_fill_mark_waits_for_a_newer_quote():
+    from stonkfly.reinforcement import due_fill_mark
+
+    mark = {"equity": "99.9", "timestamp": 120.0}
+    assert due_fill_mark(None, 500.0) is None
+    assert due_fill_mark(mark, 120.0) is None  # Same candle as the fill.
+    assert due_fill_mark(mark, 180.0) == "99.9"
+
+
 def test_stimulus_rejects_unknown_mode():
     from stonkfly.reinforcement import stimulus
 

@@ -18,6 +18,18 @@ def reinforcement(equity, anchor, deadband):
     return kind, delta
 
 
+def due_fill_mark(fill_anchor, quote_timestamp):
+    """Return the post-fill equity mark once a newer quote exists, else None.
+
+    The observation right after a fill can share the fill's own quote (in
+    replay it always does), which would compare equity with itself. The mark
+    waits for the first observation priced later than the fill.
+    """
+    if not fill_anchor or quote_timestamp <= fill_anchor["timestamp"]:
+        return None
+    return fill_anchor["equity"]
+
+
 def stimulus(mode, equity, anchor, fill_anchor, deadband):
     """Select this observation's reinforcement input.
 

@@ -209,7 +209,7 @@ def main():
         from .display import market_frame
         from .market import CoinbaseMarket, FixtureMarket, ReplayMarket
         from .neural.controller import FlyController
-        from .reinforcement import stimulus
+        from .reinforcement import due_fill_mark, stimulus
         from .risk import Guard, Veto
 
         if a.replay:
@@ -328,11 +328,12 @@ def main():
             product = settings.products[tick % len(settings.products)]
             q = quotes[product]
             equity = ledger.equity(quotes)
+            fill_mark = due_fill_mark(ledger.get("fill_anchor"), q.timestamp)
             natural, delta = stimulus(
                 settings.reward_mode,
                 equity,
                 ledger.get("anchor"),
-                ledger.get("fill_anchor"),
+                fill_mark,
                 settings.reward_deadband,
             )
             kind = natural
@@ -372,13 +373,18 @@ def main():
                     order = action.invoke({"product": product, "side": neural["side"]})
                 except Veto as e:
                     order = {"status": "VETO", "reason": str(e)}
-            # Post-fill mark for reward_mode=fill: consumed by the next observation.
-            ledger.put(
-                "fill_anchor",
-                str(ledger.equity(action.quotes))
-                if order["status"] in ("FILLED", "SETTLED")
-                else None,
-            )
+            # Post-fill mark for reward_mode=fill, consumed by the first later-priced
+            # observation. A newer fill replaces an unconsumed mark.
+            if order["status"] in ("FILLED", "SETTLED"):
+                ledger.put(
+                    "fill_anchor",
+                    {
+                        "equity": str(ledger.equity(action.quotes)),
+                        "timestamp": action.quotes[product].timestamp,
+                    },
+                )
+            elif fill_mark is not None:
+                ledger.put("fill_anchor", None)
             row = {
                 "tick": ledger.get("tick"),
                 "wall_time": time.time(),
