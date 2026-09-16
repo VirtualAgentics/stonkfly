@@ -39,6 +39,7 @@ class Settings:
     pulse_ms: float = 200
     pulse_current: float = 20
     reward_deadband: str = "0.01"
+    reward_mode: str = "equity"  # "equity": delta since last observation; "fill": only after an own fill
     decoder_threshold_hz: float = 2
     decoder_center: str = "none"  # "none": fixed upstream decoder; "ema": subtract running mean
     decoder_window: int = 50  # observations in the running mean
@@ -75,6 +76,8 @@ class Settings:
             raise ValueError("Rate limit: >=60 s between orders, <=100 orders/day")
         if D(self.reward_deadband) <= 0:
             raise ValueError("Positive reinforcement deadband required")
+        if self.reward_mode not in ("equity", "fill"):
+            raise ValueError("reward_mode must be equity|fill")
         if self.decoder_center not in ("none", "ema") or (
             type(self.decoder_window) is not int or not 2 <= self.decoder_window <= 10000
         ):

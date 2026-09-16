@@ -64,6 +64,12 @@ def main():
     )
     run.add_argument("--decoder-window", type=int, default=50)
     run.add_argument(
+        "--reward-mode",
+        choices=["equity", "fill"],
+        default="equity",
+        help="fill: reinforce only the observation after an own fill, against the post-fill mark",
+    )
+    run.add_argument(
         "--replay",
         type=Path,
         help="Stored candles from `fetch`; chronological paper replay, implies --fast",
@@ -162,6 +168,7 @@ def main():
         pulse_ms=min(200, a.neural_ms),
         decoder_center=a.decoder_center,
         decoder_window=a.decoder_window,
+        reward_mode=a.reward_mode,
     )
     out = a.out or Path("runs/live" if a.live else "runs/paper")
     out.mkdir(parents=True, exist_ok=True)
@@ -202,7 +209,7 @@ def main():
         from .display import market_frame
         from .market import CoinbaseMarket, FixtureMarket, ReplayMarket
         from .neural.controller import FlyController
-        from .reinforcement import reinforcement
+        from .reinforcement import stimulus
         from .risk import Guard, Veto
 
         if a.replay:
@@ -321,8 +328,12 @@ def main():
             product = settings.products[tick % len(settings.products)]
             q = quotes[product]
             equity = ledger.equity(quotes)
-            natural, delta = reinforcement(
-                equity, ledger.get("anchor"), settings.reward_deadband
+            natural, delta = stimulus(
+                settings.reward_mode,
+                equity,
+                ledger.get("anchor"),
+                ledger.get("fill_anchor"),
+                settings.reward_deadband,
             )
             kind = natural
             if schedule is not None:
@@ -361,6 +372,13 @@ def main():
                     order = action.invoke({"product": product, "side": neural["side"]})
                 except Veto as e:
                     order = {"status": "VETO", "reason": str(e)}
+            # Post-fill mark for reward_mode=fill: consumed by the next observation.
+            ledger.put(
+                "fill_anchor",
+                str(ledger.equity(action.quotes))
+                if order["status"] in ("FILLED", "SETTLED")
+                else None,
+            )
             row = {
                 "tick": ledger.get("tick"),
                 "wall_time": time.time(),

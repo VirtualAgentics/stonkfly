@@ -55,7 +55,15 @@ sequence tick by tick (a yoked control); with `--reinforcement-seed` the
 sequence is permuted (a shuffled control). The natural stimulus is still
 logged as `natural_stimulus`. `report` reads only local run directories and
 compares each run with cash and a single buy-and-hold order on its own
-window. Interrupting a replay and rerunning the same command resumes it.
+window.
+
+Two optional model variants exist for replay comparisons; both default off
+and change the run's settings signature. `--decoder-center ema` subtracts a
+running mean of past DNp20 differences before thresholding, so a persistent
+circuit bias no longer maps to one-sided exposure. `--reward-mode fill`
+delivers a dopamine pulse only on the observation after the fly's own fill,
+comparing equity with the mark taken right after that fill; holding through
+price drift produces no pulse. Interrupting a replay and rerunning the same command resumes it.
 
 `--fast` skips wall waits only in paper mode. It preserves the 0.1 ms neural timestep and the real 60-second execution cooldown, so an accelerated probe can have many rejected trades. This is a plumbing/neural test, not a backtest of achievable market returns. Paper fills use observed bid/ask plus the configured fee; they do not simulate depth, queue position or all market impact. `--fixture` never claims real market data.
 

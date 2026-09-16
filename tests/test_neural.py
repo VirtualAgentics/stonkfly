@@ -50,6 +50,32 @@ def test_explicit_feedback(equity, expected):
     assert reinforcement(equity, "100", ".01")[0] == expected
 
 
+@pytest.mark.parametrize(
+    "mode,equity,anchor,fill_anchor,expected",
+    [
+        ("equity", "100.05", "100", None, ("reward", "0.05")),
+        ("equity", "100.05", "100", "99", ("reward", "0.05")),  # Ignores fill mark.
+        ("fill", "100.05", "100", None, ("none", "0.05")),  # No own fill: no pulse.
+        ("fill", "100.05", "100", "100.10", ("aversive", "-0.05")),
+        ("fill", "100.05", "99", "100.00", ("reward", "0.05")),
+        ("fill", "100.005", "99", "100.00", ("none", "0.005")),
+    ],
+)
+def test_stimulus_modes(mode, equity, anchor, fill_anchor, expected):
+    from stonkfly.config import D
+    from stonkfly.reinforcement import stimulus
+
+    kind, delta = stimulus(mode, equity, anchor, fill_anchor, ".01")
+    assert (kind, delta) == (expected[0], D(expected[1]))
+
+
+def test_stimulus_rejects_unknown_mode():
+    from stonkfly.reinforcement import stimulus
+
+    with pytest.raises(ValueError):
+        stimulus("profit", "100", "100", None, ".01")
+
+
 def trace_protocol(order, frozen=False):
     k = np.zeros(2)
     d = np.zeros(1)
